@@ -41,9 +41,18 @@ static uint32_t lastStatsLog = 0;
 // 背光控制(关闭=真正熄屏省电)
 static void setBacklight(bool on)
 {
-    pinMode(TFT_BL, INPUT);
-    analogWrite(TFT_BL, on ? 180 : 0);
-    pinMode(TFT_BL, OUTPUT);
+    if (on)
+    {
+        pinMode(TFT_BL, INPUT);
+        analogWrite(TFT_BL, 180);
+        pinMode(TFT_BL, OUTPUT);
+    }
+    else
+    {
+        // 本板背光是低电平点亮(active-low): 拉高引脚即关闭
+        pinMode(TFT_BL, OUTPUT);
+        digitalWrite(TFT_BL, HIGH);
+    }
 }
 
 // 是否处于休眠时段(支持跨午夜)
