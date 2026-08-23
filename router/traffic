@@ -1,0 +1,63 @@
+#!/bin/sh
+# ============================================================
+# SD2 OpenWrt 网速监视器 - 实时速率接口(CGI)
+# 每次请求: 读接口计数器 → 与上次请求差分 → 直接返回当前速率(字节/秒)
+# 以及 CPU 占用率、内存占用率。无后台进程。
+# 仅保留一个一行临时状态文件用于两次请求间的差分。
+#
+# 安装:
+#   scp traffic root@192.168.1.1:/www/cgi-bin/traffic
+#   ssh root@192.168.1.1 "chmod +x /www/cgi-bin/traffic"
+#
+# 输出示例:
+#   {"rx":1234,"tx":56,"cpu":12,"mem":7,"hour":14}
+#   hour = 路由器当前小时(0-23), 供固件休眠时段判断
+# ============================================================
+
+IFACE="pppoe-wan"   # 要监控的接口(netifd 设备名)
+STATE="/tmp/traffic.state"
+CPUSTAT="/tmp/traffic.cpustat"
+
+rd() {
+  awk -v i="$1" '$0 ~ i ":" { gsub(":", "", $1); print $2, $10 }' /proc/net/dev
+}
+
+now="$(awk '{print $1}' /proc/uptime)"
+
+set -- $(rd "$IFACE")
+cur_rx="${1:-0}"; cur_tx="${2:-0}"
+
+srx=0; stx=0
+if [ -r "$STATE" ]; then
+  read o_now o_rx o_tx < "$STATE"
+  dt="$(awk -v a="$now" -v b="$o_now" 'BEGIN{d=a-b; if(d<0.05) d=0.05; printf "%.3f", d}')"
+  srx="$(awk -v a="$cur_rx" -v b="$o_rx" -v d="$dt" 'BEGIN{if(a<b)a=b; printf "%.0f", (a-b)/d}')"
+  stx="$(awk -v a="$cur_tx" -v b="$o_tx" -v d="$dt" 'BEGIN{if(a<b)a=b; printf "%.0f", (a-b)/d}')"
+fi
+echo "$now $cur_rx $cur_tx" > "$STATE"
+
+# CPU 占用率(两次请求间差分)
+set -- $(awk '/^cpu / {print $2, $3, $4, $5, $6, $7, $8}' /proc/stat)
+tot=$(( $1 + $2 + $3 + $4 + $5 + $6 + $7 ))
+idl=$(( $4 + $5 ))
+cpu=0
+if [ -r "$CPUSTAT" ]; then
+  read o_t o_i < "$CPUSTAT"
+  d=$((tot - o_t)); di=$((idl - o_i))
+  if [ "$d" -gt 0 ]; then
+    cpu=$((100 - di * 100 / d))
+  fi
+fi
+echo "$tot $idl" > "$CPUSTAT"
+[ "$cpu" -lt 0 ] && cpu=0
+[ "$cpu" -gt 100 ] && cpu=100
+
+mem="$(awk '
+  /MemTotal:/{t=$2} /MemFree:/{f=$2} /^Buffers:/{b=$2} /^Cached:/{c=$2}
+  END{u=t-f-b-c; if(u<0)u=0; printf "%d", (t>0)?u*100/t:0}
+' /proc/meminfo)"
+
+printf 'Content-Type: application/json\r\n\r\n'
+# 按需求对调方向: rx=原tx(上传), tx=原rx(下载)
+hour="$(date +%H 2>/dev/null || echo 0)"
+printf '{"rx":%s,"tx":%s,"cpu":%s,"mem":%s,"hour":%s}\n' "$stx" "$srx" "$cpu" "$mem" "$hour"

@@ -1,0 +1,18 @@
+# PlatformIO 构建产物
+.pio/
+.vscode/
+
+# Python 虚拟环境
+.venv/
+
+# 本地辅助脚本(内含路由器登录凭据, 不提交)
+*.exp
+
+# 本地配置(复制自 config.example.h, 含真实 WiFi, 不提交)
+src/config.h
+
+# macOS
+.DS_Store
+
+# 其它
+*.bak
