@@ -25,9 +25,9 @@ static sd2::SleepScheduler sleepSched(SLEEP_START_HOUR, SLEEP_END_HOUR);
 static sd2::Backlight backlight(5, sd2::Backlight::PWM_INVERTED);
 
 // ---------- 颜色（与 sd2-deepseek-balance 保持一致）----------
-#define C_BG      tft.color565(0x0E, 0x11, 0x20)
-#define C_CARD    tft.color565(0x1B, 0x22, 0x3C)
-#define C_BORDER  tft.color565(0x2E, 0x38, 0x58)
+#define C_BG      tft.color565(0x00, 0x00, 0x00)
+#define C_CARD    tft.color565(0x14, 0x19, 0x26)
+#define C_BORDER  tft.color565(0x28, 0x32, 0x49)
 #define C_LABEL   tft.color565(0x9A, 0xA5, 0xC8)
 #define C_WHITE   tft.color565(0xFF, 0xFF, 0xFF)
 #define C_GREEN   tft.color565(0x34, 0xD3, 0x99)
