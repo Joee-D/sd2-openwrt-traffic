@@ -2,7 +2,7 @@
 # ============================================================
 # SD2 OpenWrt 网速监视器 - 实时速率接口(CGI)
 # 每次请求: 读接口计数器 → 与上次请求差分 → 直接返回当前速率(字节/秒)
-# 以及 CPU 占用率、内存占用率。无后台进程。
+# 以及 CPU 占用率、内存占用率、CPU 温度。无后台进程。
 # 仅保留一个一行临时状态文件用于两次请求间的差分。
 #
 # 安装:
@@ -10,8 +10,9 @@
 #   ssh root@192.168.1.1 "chmod +x /www/cgi-bin/traffic"
 #
 # 输出示例:
-#   {"rx":1234,"tx":56,"cpu":12,"mem":7,"hour":14}
-#   hour = 路由器当前小时(0-23), 供固件休眠时段判断
+#   {"rx":1234,"tx":56,"cpu":12,"mem":7,"temp":52}
+#   temp = CPU 温度(摄氏度, 无传感器返回 -1); 休眠时段由固件 NTP 本地时间判断,
+#   不再需要路由器返回小时
 # ============================================================
 
 IFACE="pppoe-wan"   # 要监控的接口(netifd 设备名)
@@ -57,7 +58,35 @@ mem="$(awk '
   END{u=t-f-b-c; if(u<0)u=0; printf "%d", (t>0)?u*100/t:0}
 ' /proc/meminfo)"
 
+# CPU 温度(摄氏度; 无传感器返回 -1)
+# 常见路径: /sys/class/thermal/thermal_zone*/temp (毫摄氏度)
+#           /sys/class/hwmon/hwmon*/temp*_input  (部分设备)
+temp="-1"
+for tz in /sys/class/thermal/thermal_zone*/temp; do
+  [ -r "$tz" ] || continue
+  t="$(cat "$tz" 2>/dev/null)"
+  case "$t" in
+    ''|*[!0-9]*) continue ;;
+  esac
+  if [ "$t" -gt 0 ] && [ "$t" -lt 1000000 ]; then
+    temp=$(( (t + 500) / 1000 ))
+    break
+  fi
+done
+if [ "$temp" = "-1" ]; then
+  for hm in /sys/class/hwmon/hwmon*/temp*_input; do
+    [ -r "$hm" ] || continue
+    t="$(cat "$hm" 2>/dev/null)"
+    case "$t" in
+      ''|*[!0-9]*) continue ;;
+    esac
+    if [ "$t" -gt 0 ] && [ "$t" -lt 1000000 ]; then
+      temp=$(( (t + 500) / 1000 ))
+      break
+    fi
+  done
+fi
+
 printf 'Content-Type: application/json\r\n\r\n'
 # 按需求对调方向: rx=原tx(上传), tx=原rx(下载)
-hour="$(date +%H 2>/dev/null || echo 0)"
-printf '{"rx":%s,"tx":%s,"cpu":%s,"mem":%s,"hour":%s}\n' "$stx" "$srx" "$cpu" "$mem" "$hour"
+printf '{"rx":%s,"tx":%s,"cpu":%s,"mem":%s,"temp":%s}\n' "$stx" "$srx" "$cpu" "$mem" "$temp"

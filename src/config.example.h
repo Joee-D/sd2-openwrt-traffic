@@ -31,8 +31,21 @@ const uint16_t CHART_POINTS = 60;
 // 固件完全通用: 路由器端 openwrt/traffic 脚本返回什么(rx/tx/cpu/mem)就显示什么。
 // 要监控哪个接口(pppoe-wan / br-lan / eth0...), 改脚本里的 IFACE 即可, 固件不用动。
 
-// ---- 5. 休眠时段(24 小时制小时, 支持跨午夜) ----
-// 该时段关闭屏幕背光并停止刷新, 只每 30 秒探测一次时间以便准点唤醒。
+// ---- 5. NTP 时间同步 ----
+// ESP8266 无 RTC, 休眠时段按本地时间判断, 需要联网校时
+#define NTP_SERVER "ntp.aliyun.com"
+#define TZ_OFFSET_SEC (8UL * 3600UL)
+
+// ---- 6. 休眠时段(24 小时制小时, 支持跨午夜) ----
+// 该时段关闭屏幕背光并停止刷新, NTP 校时后按本地时间到点自动唤醒。
 // 两个都设为 -1 表示不启用休眠。
 const int SLEEP_START_HOUR = 0;   // 默认 0 点(晚上12:00)
 const int SLEEP_END_HOUR   = 7;   // 默认到早晨 7 点
+
+// ---- 7. 屏幕背光 ----
+// 背光引脚(GPIO5/D1)与反相 PWM 驱动为 SD2 固定硬件, 已固化在 main.cpp,
+// 与 deepseek 工程一致; 这里只需保留亮度(0~1023, 数值越大越亮, 默认 800)
+#define BRIGHTNESS 800
+
+// ---- 8. 串口 ----
+#define SERIAL_BAUD 921600
