@@ -55,6 +55,11 @@ static int cpuPct = 0;
 static int memPct = 0;
 static int tempC = -1; // CPU 温度(摄氏度, 无传感器为 -1)
 
+// 已绘制状态(增量刷新用)
+static char lastRx[8] = "", lastRxUnit[8] = "";
+static char lastTx[8] = "", lastTxUnit[8] = "";
+static int lastCpu = -1, lastMem = -1, lastTemp = -1;
+
 // ---------- 启动页 ----------
 void drawBootPage(bool fail) {
     tft.fillScreen(C_BG);
@@ -103,31 +108,46 @@ static bool fetchData()
 
 // ---------- 主页面元素 ----------
 // 一列速度显示: 箭头 + 大数字 + 单位(只刷新本列区域, 避免整屏闪烁)
-static void drawSpeedCol(int colX, bool down, double mbps, uint16_t arrowColor)
+static void drawSpeedCol(int colX, bool down, double mbps, uint16_t arrowColor,
+                         char *lastBig, size_t lastBigLen,
+                         char *lastUnit, size_t lastUnitLen)
 {
     char big[16], unit[8];
     sd2::formatRate(mbps, big, sizeof(big), unit, sizeof(unit));
+    bool bigChanged = strcmp(big, lastBig) != 0;
+    bool unitChanged = strcmp(unit, lastUnit) != 0;
+    if (!bigChanged && !unitChanged)
+        return; // 数值与单位都没变, 不刷新
 
-    // 清本列区域(列高 84, 去掉 Pk 峰值给底部表盘腾空间)
-    tft.fillRect(colX, 0, 112, 84, C_BG);
+    if (bigChanged)
+    {
+        // 只清数字行(0-52), 不碰下方单位/箭头
+        tft.fillRect(colX, 0, 112, 52, C_BG);
 
-    // 大数字 Font2 3x(48px), 居中
-    tft.setTextFont(2);
-    tft.setTextSize(3);
-    tft.setTextColor(C_WHITE);
-    tft.drawString(big, colX + (112 - tft.textWidth(big)) / 2, 2);
+        // 大数字 Font2 3x(48px), 居中
+        tft.setTextFont(2);
+        tft.setTextSize(3);
+        tft.setTextColor(C_WHITE);
+        tft.drawString(big, colX + (112 - tft.textWidth(big)) / 2, 2);
+        strcpy(lastBig, big);
+    }
 
-    // 箭头 + 单位, 数字下方居中
-    tft.setTextFont(2);
-    tft.setTextSize(1);
-    int groupW = 12 + 4 + tft.textWidth(unit);
-    int gx = colX + (112 - groupW) / 2;
-    if (down)
-        tft.fillTriangle(gx, 54, gx + 12, 54, gx + 6, 66, arrowColor);
-    else
-        tft.fillTriangle(gx, 66, gx + 12, 66, gx + 6, 54, arrowColor);
-    tft.setTextColor(C_LABEL);
-    tft.drawString(unit, gx + 16, 52);
+    if (unitChanged)
+    {
+        // 单位变化才重绘箭头 + 单位(50-84)
+        tft.fillRect(colX, 50, 112, 34, C_BG);
+        tft.setTextFont(2);
+        tft.setTextSize(1);
+        int groupW = 12 + 4 + tft.textWidth(unit);
+        int gx = colX + (112 - groupW) / 2;
+        if (down)
+            tft.fillTriangle(gx, 54, gx + 12, 54, gx + 6, 66, arrowColor);
+        else
+            tft.fillTriangle(gx, 66, gx + 12, 66, gx + 6, 54, arrowColor);
+        tft.setTextColor(C_LABEL);
+        tft.drawString(unit, gx + 16, 52);
+        strcpy(lastUnit, unit);
+    }
 }
 
 // 折线图(透明背景, 无网格)
@@ -178,8 +198,15 @@ static void drawBar(int x, int y, int w, int pct)
 }
 
 // 底部一行: 标签(小, 左对齐) + 百分比(2x, 右对齐) + 进度条
-static void drawStatRow(int x, int colW, const char *label, int pct, int yPct, int yBar)
+static void drawStatRow(int x, int colW, const char *label, int pct, int yPct, int yBar, int *lastPct)
 {
+    if (pct == *lastPct)
+        return; // 百分比没变不刷新
+    *lastPct = pct;
+
+    // 清本行区域(标签+百分比+进度条)
+    tft.fillRect(x, yPct - 2, colW, yBar + 10 - (yPct - 2), C_BG);
+
     // 标签左对齐
     tft.setTextFont(2);
     tft.setTextSize(1);
@@ -198,6 +225,10 @@ static void drawStatRow(int x, int colW, const char *label, int pct, int yPct, i
 // 右下: 温度圆圈(完整圆环 + 圆弧进度 + 中央数值)
 static void drawTempGauge()
 {
+    if (tempC == lastTemp)
+        return; // 温度没变不刷新
+    lastTemp = tempC;
+
     const int cx = 176, cy = 186, r = 42, ir = 37;
     tft.fillRect(126, 142, 100, 94, C_BG);
 
@@ -227,16 +258,15 @@ static void draw()
     tft.startWrite();
 
     // 顶部: 左=下行(红), 右=上行(绿)
-    drawSpeedCol(6, true, rxMbps, C_RED);
-    drawSpeedCol(124, false, txMbps, C_GREEN);
+    drawSpeedCol(6, true, rxMbps, C_RED, lastRx, sizeof(lastRx), lastRxUnit, sizeof(lastRxUnit));
+    drawSpeedCol(124, false, txMbps, C_GREEN, lastTx, sizeof(lastTx), lastTxUnit, sizeof(lastTxUnit));
 
     // 曲线
     drawChart();
 
-    // 底部左: CPU / Memory 两行(标签+百分比+进度条)
-    tft.fillRect(2, 140, 118, 92, C_BG);
-    drawStatRow(6, 108, "CPU", cpuPct, 142, 176);
-    drawStatRow(6, 108, "Memory", memPct, 188, 222);
+    // 底部左: CPU / Memory 两行(标签+百分比+进度条, 值变化才刷新)
+    drawStatRow(6, 108, "CPU", cpuPct, 142, 176, &lastCpu);
+    drawStatRow(6, 108, "Memory", memPct, 188, 222, &lastMem);
 
     // 底部右: 温度圆圈
     drawTempGauge();
@@ -244,10 +274,19 @@ static void draw()
     tft.endWrite();
 }
 
+// 整屏重绘前重置增量状态, 确保所有元素都重新绘制
+static void resetDrawState()
+{
+    lastRx[0] = lastRxUnit[0] = 0;
+    lastTx[0] = lastTxUnit[0] = 0;
+    lastCpu = lastMem = lastTemp = -1;
+}
+
 // 主页面完整重绘（启动页/休眠唤醒等整屏切换时调用，先清屏避免文字残留）
 static void drawMainPage()
 {
     tft.fillScreen(C_BG);
+    resetDrawState();
     draw();
 }
 
