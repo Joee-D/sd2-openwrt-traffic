@@ -88,5 +88,5 @@ if [ "$temp" = "-1" ]; then
 fi
 
 printf 'Content-Type: application/json\r\n\r\n'
-# 按需求对调方向: rx=原tx(上传), tx=原rx(下载)
-printf '{"rx":%s,"tx":%s,"cpu":%s,"mem":%s,"temp":%s}\n' "$stx" "$srx" "$cpu" "$mem" "$temp"
+# rx = 下载(原 rx 计数), tx = 上传(原 tx 计数)，与固件左右箭头一致
+printf '{"rx":%s,"tx":%s,"cpu":%s,"mem":%s,"temp":%s}\n' "$srx" "$stx" "$cpu" "$mem" "$temp"
