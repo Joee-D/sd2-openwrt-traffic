@@ -4,6 +4,7 @@
 #include <time.h>
 #include <TFT_eSPI.h>
 #include <SD2Common.h>
+#include <Sd2App.h>
 
 #include "OpenWrtClient.h"
 #include "config.h"
@@ -15,37 +16,21 @@
 //  - 上下行箭头用三角形绘制
 // 流程与姊妹工程 sd2-deepseek-balance 保持一致:
 // 启动页 -> WiFi -> NTP 校时 -> 周期拉取, 休眠时段按本地时间判断。
-TFT_eSPI tft = TFT_eSPI();
 OpenWrtClient router(ROUTER_HOST, ROUTER_PORT);
 
-// 公共基础组件（sd2-common）
-static sd2::Wifi wifi;
-static sd2::SleepScheduler sleepSched(SLEEP_START_HOUR, SLEEP_END_HOUR);
-// SD2 固定硬件：背光 GPIO5(D1)，反相 PWM（与 deepseek 工程一致）
-static sd2::Backlight backlight(5, sd2::Backlight::PWM_INVERTED);
-
-// ---------- 颜色（与 sd2-deepseek-balance 保持一致）----------
-#define C_BG      tft.color565(0x00, 0x00, 0x00)
-#define C_CARD    tft.color565(0x14, 0x19, 0x26)
-#define C_BORDER  tft.color565(0x28, 0x32, 0x49)
-#define C_LABEL   tft.color565(0x9A, 0xA5, 0xC8)
-#define C_WHITE   tft.color565(0xFF, 0xFF, 0xFF)
-#define C_GREEN   tft.color565(0x34, 0xD3, 0x99)
-#define C_RED     tft.color565(0xFF, 0x6B, 0x6B)
-#define C_ACCENT  tft.color565(0x4D, 0x6B, 0xFE)
-// 高温告警色(deepseek 无此语义, 保留橙色做区分)
-#define C_TEMP_HOT tft.color565(0xFF, 0x5D, 0x18)
+// ---------- 公共运行骨架（sd2-common）----------
+static sd2::App app(POLL_INTERVAL_MS, SLEEP_START_HOUR, SLEEP_END_HOUR);
+TFT_eSPI &tft = app.tft;
+static sd2::Wifi &wifi = app.wifi;
+static sd2::SleepScheduler &sleepSched = app.sleep;
+static sd2::Backlight &backlight = app.backlight;
+static bool &bootDone = app.bootDone;
+static bool &ntpDone = app.ntpDone;
+static uint32_t &lastPoll = app.lastFetchMs;
 
 // ---------- 状态 ----------
-static bool bootDone = false;
-static bool ntpDone = false;
-static bool wifiFailShown = false;
-static uint32_t lastPoll = 0;
 static uint32_t lastOkTime = 0;
-static uint32_t lastSleepCheck = 0;
-static uint32_t lastHeapPrint = 0;
 static uint32_t lastStatsLog = 0;
-static uint32_t bootStart = 0;
 
 // ---------- 数据 ----------
 static double rxMbps = 0, txMbps = 0;
@@ -290,50 +275,29 @@ static void drawMainPage()
     draw();
 }
 
-// ---------- 定时休眠（NTP 本地时间）----------
-void updateSleep()
+// ---------- 公共骨架回调 ----------
+static void onConnected()
 {
-    bool changed = sleepSched.update(sd2::localHour());
-    if (changed && sleepSched.sleeping())
-    {
-        tft.fillScreen(C_BG);
-        backlight.off();
-        Serial.println("[sleep] display off, fetch paused");
-    }
-    else if (changed && !sleepSched.sleeping())
-    {
-        backlight.on();
-        for (int i = 0; i < CHART_POINTS; i++)
-            rxHist[i] = txHist[i] = 0; // 清掉休眠期间的曲线
-        lastPoll = millis() - POLL_INTERVAL_MS; // 醒来立即刷新
-        if (bootDone) drawMainPage();
-        Serial.println("[sleep] wake up");
-    }
+    if (!sleepSched.sleeping()) drawMainPage();
 }
 
-// ---------- 网络 ----------
-void handleWiFi()
+static void onDisconnected()
 {
-    wifi.loop();
-    if (wifi.justConnected())
-    {
-        Serial.print("WiFi connected, IP: ");
-        Serial.println(wifi.ip().c_str());
-        bootDone = true;
-        if (!sleepSched.sleeping()) drawMainPage();
-        sd2::timeBegin(TZ_OFFSET_SEC, NTP_SERVER);
-        lastPoll = millis() - POLL_INTERVAL_MS; // 立即拉取
-    }
-    if (wifi.justDisconnected())
-    {
-        Serial.println("WiFi disconnected, retrying...");
-    }
+    Serial.println("WiFi disconnected, retrying...");
+}
 
-    if (!wifi.connected() && !bootDone && !wifiFailShown && millis() - bootStart > 30000)
-    {
-        wifiFailShown = true;
-        drawBootPage(true);
-    }
+static void onSleep()
+{
+    tft.fillScreen(C_BG);
+    Serial.println("[sleep] display off, fetch paused");
+}
+
+static void onWake()
+{
+    for (int i = 0; i < CHART_POINTS; i++)
+        rxHist[i] = txHist[i] = 0; // 清掉休眠期间的曲线
+    if (bootDone) drawMainPage();
+    Serial.println("[sleep] wake up");
 }
 
 void handleFetch()
@@ -381,35 +345,12 @@ void setup()
     Serial.println();
     Serial.println("SD2 OpenWrt speed monitor (TFT_eSPI native)");
 
-    tft.begin();
-    tft.setRotation(0);
-    tft.setTextDatum(TL_DATUM);
-
-    backlight.begin();
-    backlight.setBrightness(BRIGHTNESS);
-    Serial.printf("[bl] backlight pin=%d mode=PWM_INVERTED brightness=%d\n", 5, BRIGHTNESS);
-
-    bootStart = millis();
-    drawBootPage(false);
-
-    wifi.begin(WIFI_SSID, WIFI_PASS, /*persistent=*/false);
+    app.setHooks(drawBootPage, handleFetch,
+                 onConnected, onDisconnected, onSleep, onWake);
+    app.begin(WIFI_SSID, WIFI_PASS, BRIGHTNESS, TZ_OFFSET_SEC, NTP_SERVER);
 }
 
 void loop()
 {
-    handleWiFi();
-    handleFetch();
-
-    if (millis() - lastSleepCheck >= 1000)
-    {
-        lastSleepCheck = millis();
-        updateSleep();
-    }
-    if (millis() - lastHeapPrint >= 10000)
-    {
-        lastHeapPrint = millis();
-        Serial.printf("Free heap: %u B\n", ESP.getFreeHeap());
-    }
-
-    delay(20);
+    app.loop();
 }
