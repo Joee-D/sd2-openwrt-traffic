@@ -25,11 +25,9 @@ static sd2::Wifi &wifi = app.wifi;
 static sd2::SleepScheduler &sleepSched = app.sleep;
 static sd2::Backlight &backlight = app.backlight;
 static bool &bootDone = app.bootDone;
-static bool &ntpDone = app.ntpDone;
 static uint32_t &lastPoll = app.lastFetchMs;
 
 // ---------- 状态 ----------
-static uint32_t lastOkTime = 0;
 static uint32_t lastStatsLog = 0;
 
 // ---------- 数据 ----------
@@ -278,7 +276,7 @@ static void drawMainPage()
 // ---------- 公共骨架回调 ----------
 static void onConnected()
 {
-    if (!sleepSched.sleeping()) drawMainPage();
+    drawMainPage();
 }
 
 static void onDisconnected()
@@ -288,7 +286,6 @@ static void onDisconnected()
 
 static void onSleep()
 {
-    tft.fillScreen(C_BG);
     Serial.println("[sleep] display off, fetch paused");
 }
 
@@ -305,30 +302,9 @@ void handleFetch()
     if (!wifi.connected() || sleepSched.sleeping()) return;
     if (millis() - lastPoll < POLL_INTERVAL_MS) return;
 
-    // 休眠时段按本地时间判断, 先等 NTP 校时
-    if (!ntpDone)
-    {
-        if (sd2::timeSynced())
-        {
-            ntpDone = true;
-            Serial.printf("NTP time synced: %lu\n", (unsigned long)time(nullptr));
-        }
-        return;
-    }
-    if (sleepSched.sleeping()) return; // 休眠时段不拉取数据
-
     lastPoll = millis();
     if (fetchData())
-    {
-        lastOkTime = millis();
         draw();
-    }
-    else if (millis() - lastOkTime > 60000)
-    {
-        // 长时间取不到数据: 自动重启自愈
-        Serial.println("[watchdog] no data for 60s, restarting");
-        ESP.restart();
-    }
 
     if (millis() - lastStatsLog > 10000)
     {
